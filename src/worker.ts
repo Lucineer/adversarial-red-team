@@ -1,644 +1,683 @@
-interface Attack {
+export interface Env {
+  ATTACK_QUEUE: Queue;
+  ATTACK_RESULTS: KVNamespace;
+}
+
+interface AttackRequest {
+  persona: string;
+  target: string;
+  intensity: number;
+}
+
+interface AttackRecord {
   id: string;
   persona: string;
   target: string;
+  intensity: number;
   timestamp: number;
-  status: 'running' | 'completed' | 'failed';
-  results?: {
-    vulnerabilities: string[];
-    severity: 'low' | 'medium' | 'high' | 'critical';
-    vaccineGenerated: boolean;
-  };
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  findings?: string[];
 }
 
-interface DashboardData {
-  totalAttacks: number;
-  activeAttacks: number;
-  vulnerabilitiesFound: number;
-  criticalVulnerabilities: number;
-  recentAttacks: Attack[];
-  topPersonas: { persona: string; count: number }[];
-}
-
-const ATTACKS_DB: Map<string, Attack> = new Map();
-const DASHBOARD_DATA: DashboardData = {
-  totalAttacks: 0,
-  activeAttacks: 0,
-  vulnerabilitiesFound: 42,
-  criticalVulnerabilities: 7,
-  recentAttacks: [],
-  topPersonas: [
-    { persona: 'prompt injector', count: 15 },
-    { persona: 'privilege escaler', count: 12 },
-    { persona: 'role manipulator', count: 8 },
-    { persona: 'data exfiltrator', count: 7 },
-  ],
+const ATTACK_PERSONAS = {
+  "stealth-scanner": {
+    name: "Stealth Scanner",
+    description: "Low-and-slow reconnaissance, evades detection",
+    techniques: ["Port scanning", "Service fingerprinting", "Subdomain enumeration"]
+  },
+  "payload-injector": {
+    name: "Payload Injector",
+    description: "Attempts code/command injection vulnerabilities",
+    techniques: ["SQLi", "XSS", "Command injection", "Template injection"]
+  },
+  "auth-cracker": {
+    name: "Authentication Cracker",
+    description: "Tests authentication and session mechanisms",
+    techniques: ["Credential stuffing", "Session hijacking", "JWT tampering"]
+  },
+  "resource-stressor": {
+    name: "Resource Stressor",
+    description: "Overwhelms system resources to test resilience",
+    techniques: ["Memory exhaustion", "CPU saturation", "Connection flooding"]
+  }
 };
 
-const PERSONAS = [
-  {
-    id: 'prompt-injector',
-    name: 'Prompt Injector',
-    description: 'Attempts to bypass AI safeguards through crafted inputs',
-    icon: '💉',
-  },
-  {
-    id: 'role-manipulator',
-    name: 'Role Manipulator',
-    description: 'Seeks to escalate privileges by assuming unauthorized roles',
-    icon: '🎭',
-  },
-  {
-    id: 'privilege-escaler',
-    name: 'Privilege Escaler',
-    description: 'Exploits permission flaws to gain elevated access',
-    icon: '📈',
-  },
-  {
-    id: 'data-exfiltrator',
-    name: 'Data Exfiltrator',
-    description: 'Attempts to extract sensitive data through various channels',
-    icon: '📤',
-  },
-];
-
-const html = `
+const HTML_TEMPLATE = `
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Adversarial Red Team</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title>Adversarial Red Team | Cloudflare Worker</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
             background: #0a0a0f;
-            color: #f0f0f0;
+            color: #e5e5e5;
             line-height: 1.6;
             min-height: 100vh;
+            padding: 20px;
         }
-        
+        @font-face {
+            font-family: 'Inter';
+            font-style: normal;
+            font-weight: 400;
+            src: url(https://fonts.gstatic.com/s/inter/v12/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZJhiI2B.woff2) format('woff2');
+            font-display: swap;
+        }
         .container {
             max-width: 1200px;
             margin: 0 auto;
-            padding: 0 20px;
         }
-        
-        .hero {
-            text-align: center;
-            padding: 80px 20px;
-            background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 100%);
-            border-bottom: 1px solid #222;
-        }
-        
-        .hero h1 {
-            font-size: 3.5rem;
-            font-weight: 700;
-            margin-bottom: 20px;
-            background: linear-gradient(90deg, #dc2626, #ff6b6b);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        
-        .hero p {
-            font-size: 1.5rem;
-            color: #aaa;
-            max-width: 800px;
-            margin: 0 auto 40px;
-        }
-        
-        .cta-button {
-            display: inline-block;
-            background: #dc2626;
-            color: white;
-            padding: 16px 32px;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 1.1rem;
-            transition: all 0.3s ease;
-            border: none;
-            cursor: pointer;
-        }
-        
-        .cta-button:hover {
-            background: #b91c1c;
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(220, 38, 38, 0.2);
-        }
-        
-        .section {
-            padding: 80px 0;
-        }
-        
-        .section-title {
-            font-size: 2.5rem;
+        header {
+            border-bottom: 2px solid #dc2626;
+            padding-bottom: 20px;
             margin-bottom: 40px;
-            color: #fff;
-            text-align: center;
         }
-        
+        h1 {
+            color: #dc2626;
+            font-size: 2.8rem;
+            margin-bottom: 10px;
+        }
+        .tagline {
+            color: #a1a1aa;
+            font-size: 1.2rem;
+            margin-bottom: 30px;
+        }
+        .section {
+            background: #161622;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 30px;
+            border-left: 4px solid #dc2626;
+        }
+        h2 {
+            color: #f4f4f5;
+            margin-bottom: 20px;
+            font-size: 1.8rem;
+        }
+        h3 {
+            color: #dc2626;
+            margin: 15px 0 10px;
+        }
         .personas-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 30px;
-            margin-top: 40px;
+            gap: 20px;
+            margin-top: 20px;
         }
-        
         .persona-card {
-            background: #1a1a2e;
-            border-radius: 12px;
-            padding: 30px;
-            border: 1px solid #333;
-            transition: all 0.3s ease;
+            background: #1e1e2e;
+            padding: 20px;
+            border-radius: 8px;
+            border-top: 3px solid #dc2626;
         }
-        
-        .persona-card:hover {
-            border-color: #dc2626;
-            transform: translateY(-5px);
+        .persona-name {
+            font-weight: bold;
+            font-size: 1.2rem;
+            margin-bottom: 8px;
         }
-        
-        .persona-icon {
-            font-size: 2.5rem;
-            margin-bottom: 20px;
-        }
-        
-        .persona-card h3 {
-            font-size: 1.5rem;
-            margin-bottom: 15px;
-            color: #fff;
-        }
-        
-        .persona-card p {
-            color: #aaa;
+        .persona-desc {
+            color: #a1a1aa;
             font-size: 0.95rem;
+            margin-bottom: 12px;
         }
-        
+        .techniques {
+            font-size: 0.85rem;
+            color: #d4d4d8;
+        }
         .steps {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 30px;
-            margin-top: 40px;
+            gap: 20px;
+            margin-top: 20px;
         }
-        
         .step {
+            background: #1e1e2e;
+            padding: 20px;
+            border-radius: 8px;
             text-align: center;
-            padding: 30px;
-            background: #1a1a2e;
-            border-radius: 12px;
-            border: 1px solid #333;
         }
-        
         .step-number {
-            display: inline-block;
-            width: 50px;
-            height: 50px;
             background: #dc2626;
             color: white;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
-            line-height: 50px;
-            font-weight: 700;
-            font-size: 1.2rem;
-            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 15px;
+            font-weight: bold;
         }
-        
-        .step h3 {
-            font-size: 1.3rem;
-            margin-bottom: 15px;
-            color: #fff;
-        }
-        
-        .step p {
-            color: #aaa;
-            font-size: 0.95rem;
-        }
-        
-        .dashboard {
-            background: #1a1a2e;
-            border-radius: 12px;
-            padding: 40px;
-            border: 1px solid #333;
-        }
-        
-        .stats-grid {
+        .dashboard-stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 20px;
-            margin-bottom: 40px;
+            margin-top: 20px;
         }
-        
         .stat-card {
-            background: #0a0a0f;
-            padding: 25px;
+            background: #1e1e2e;
+            padding: 20px;
             border-radius: 8px;
-            border-left: 4px solid #dc2626;
+            text-align: center;
         }
-        
         .stat-value {
             font-size: 2.5rem;
-            font-weight: 700;
-            color: #fff;
-            margin-bottom: 10px;
+            color: #dc2626;
+            font-weight: bold;
         }
-        
         .stat-label {
-            color: #aaa;
-            font-size: 0.9rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+            color: #a1a1aa;
+            margin-top: 5px;
         }
-        
-        .attack-form {
-            background: #1a1a2e;
-            padding: 40px;
-            border-radius: 12px;
-            border: 1px solid #333;
-            margin-top: 40px;
+        .api-endpoints {
+            margin-top: 20px;
         }
-        
-        .form-group {
-            margin-bottom: 25px;
-        }
-        
-        .form-group label {
-            display: block;
+        .endpoint {
+            background: #1e1e2e;
+            padding: 15px;
+            border-radius: 8px;
             margin-bottom: 10px;
-            color: #fff;
-            font-weight: 500;
+            font-family: monospace;
+            border-left: 3px solid #3b82f6;
         }
-        
-        .form-group select,
-        .form-group input {
+        .method {
+            display: inline-block;
+            background: #3b82f6;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .fleet-footer {
+            margin-top: 50px;
+            text-align: center;
+            color: #6b7280;
+            font-size: 0.9rem;
+            border-top: 1px solid #2d2d3a;
+            padding-top: 20px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #f4f4f5;
+        }
+        select, input {
             width: 100%;
-            padding: 12px 16px;
-            background: #0a0a0f;
-            border: 1px solid #333;
+            padding: 12px;
+            background: #1e1e2e;
+            border: 1px solid #3f3f46;
             border-radius: 6px;
-            color: #fff;
-            font-family: 'Inter', sans-serif;
+            color: white;
             font-size: 1rem;
         }
-        
-        .form-group select:focus,
-        .form-group input:focus {
-            outline: none;
-            border-color: #dc2626;
+        button {
+            background: #dc2626;
+            color: white;
+            border: none;
+            padding: 14px 28px;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: opacity 0.2s;
         }
-        
-        footer {
-            text-align: center;
-            padding: 40px 20px;
-            border-top: 1px solid #222;
-            color: #888;
-            margin-top: 80px;
+        button:hover {
+            opacity: 0.9;
         }
-        
-        .status-badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.85rem;
-            font-weight: 600;
+        .attack-form {
+            background: #161622;
+            padding: 25px;
+            border-radius: 10px;
+            margin-bottom: 30px;
         }
-        
-        .status-running {
-            background: rgba(220, 38, 38, 0.1);
-            color: #dc2626;
-        }
-        
-        .status-completed {
-            background: rgba(34, 197, 94, 0.1);
-            color: #22c55e;
-        }
-        
-        .status-failed {
-            background: rgba(239, 68, 68, 0.1);
-            color: #ef4444;
-        }
-        
-        @media (max-width: 768px) {
-            .hero h1 {
-                font-size: 2.5rem;
-            }
-            
-            .hero p {
-                font-size: 1.2rem;
-            }
-            
-            .section-title {
-                font-size: 2rem;
-            }
+        .intensity-display {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 5px;
+            color: #a1a1aa;
+            font-size: 0.9rem;
         }
     </style>
 </head>
 <body>
-    <div class="hero">
-        <div class="container">
-            <h1>Adversarial Red Team</h1>
-            <p>Attack your fleet before someone else does. Auto-spawn attacker agents to harden your systems against real threats.</p>
-            <a href="#attack" class="cta-button">Launch Attack Simulation</a>
-        </div>
-    </div>
-    
     <div class="container">
-        <section class="section" id="personas">
-            <h2 class="section-title">Attack Personas</h2>
-            <div class="personas-grid">
-                ${PERSONAS.map(persona => `
-                    <div class="persona-card">
-                        <div class="persona-icon">${persona.icon}</div>
-                        <h3>${persona.name}</h3>
-                        <p>${persona.description}</p>
+        <header>
+            <h1>Adversarial Red Team</h1>
+            <div class="tagline">Auto-spawn attacker agents to harden fleet before threats</div>
+        </header>
+
+        <div class="attack-form">
+            <h2>Launch Attack Simulation</h2>
+            <form id="attackForm">
+                <div class="form-group">
+                    <label for="persona">Attack Persona</label>
+                    <select id="persona" name="persona" required>
+                        <option value="">Select a persona...</option>
+                        <option value="stealth-scanner">Stealth Scanner</option>
+                        <option value="payload-injector">Payload Injector</option>
+                        <option value="auth-cracker">Authentication Cracker</option>
+                        <option value="resource-stressor">Resource Stressor</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="target">Target URL/Endpoint</label>
+                    <input type="text" id="target" name="target" placeholder="https://example.com/api" required>
+                </div>
+                <div class="form-group">
+                    <label for="intensity">Attack Intensity: <span id="intensityValue">5</span></label>
+                    <input type="range" id="intensity" name="intensity" min="1" max="10" value="5">
+                    <div class="intensity-display">
+                        <span>Low</span>
+                        <span>Medium</span>
+                        <span>High</span>
                     </div>
-                `).join('')}
+                </div>
+                <button type="submit">Launch Attack Simulation</button>
+            </form>
+        </div>
+
+        <div class="section">
+            <h2>Attack Personas</h2>
+            <div class="personas-grid">
+                <div class="persona-card">
+                    <div class="persona-name">Stealth Scanner</div>
+                    <div class="persona-desc">Low-and-slow reconnaissance, evades detection</div>
+                    <div class="techniques">Techniques: Port scanning, Service fingerprinting, Subdomain enumeration</div>
+                </div>
+                <div class="persona-card">
+                    <div class="persona-name">Payload Injector</div>
+                    <div class="persona-desc">Attempts code/command injection vulnerabilities</div>
+                    <div class="techniques">Techniques: SQLi, XSS, Command injection, Template injection</div>
+                </div>
+                <div class="persona-card">
+                    <div class="persona-name">Authentication Cracker</div>
+                    <div class="persona-desc">Tests authentication and session mechanisms</div>
+                    <div class="techniques">Techniques: Credential stuffing, Session hijacking, JWT tampering</div>
+                </div>
+                <div class="persona-card">
+                    <div class="persona-name">Resource Stressor</div>
+                    <div class="persona-desc">Overwhelms system resources to test resilience</div>
+                    <div class="techniques">Techniques: Memory exhaustion, CPU saturation, Connection flooding</div>
+                </div>
             </div>
-        </section>
-        
-        <section class="section" id="how-it-works">
-            <h2 class="section-title">How It Works</h2>
+        </div>
+
+        <div class="section">
+            <h2>How It Works</h2>
             <div class="steps">
                 <div class="step">
                     <div class="step-number">1</div>
-                    <h3>Spawn Attackers</h3>
-                    <p>Deploy multiple adversarial agents with different attack personas targeting your systems.</p>
+                    <h3>Define Attack</h3>
+                    <p>Select persona, target, and intensity for simulation</p>
                 </div>
                 <div class="step">
                     <div class="step-number">2</div>
-                    <h3>Test Vessel</h3>
-                    <p>Agents systematically probe for vulnerabilities across your entire infrastructure.</p>
+                    <h3>Spawn Agents</h3>
+                    <p>Worker spawns attacker agents with specified parameters</p>
                 </div>
                 <div class="step">
                     <div class="step-number">3</div>
-                    <h3>Evaluate Results</h3>
-                    <p>Analyze attack patterns, successful breaches, and system responses in real-time.</p>
+                    <h3>Execute Simulation</h3>
+                    <p>Agents perform controlled attacks against target</p>
                 </div>
                 <div class="step">
                     <div class="step-number">4</div>
-                    <h3>Generate Vaccine</h3>
-                    <p>Automatically create and deploy security patches based on discovered vulnerabilities.</p>
+                    <h3>Report Findings</h3>
+                    <p>Vulnerabilities and resilience data collected</p>
                 </div>
             </div>
-        </section>
-        
-        <section class="section" id="dashboard">
-            <h2 class="section-title">Security Dashboard</h2>
-            <div class="dashboard">
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-value" id="totalAttacks">0</div>
-                        <div class="stat-label">Total Attacks</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="activeAttacks">0</div>
-                        <div class="stat-label">Active Attacks</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="vulnerabilitiesFound">0</div>
-                        <div class="stat-label">Vulnerabilities Found</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value" id="criticalVulnerabilities">0</div>
-                        <div class="stat-label">Critical Vulnerabilities</div>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <h3 style="color:#fff; margin-bottom:20px;">Recent Attacks</h3>
-                    <div id="recentAttacks">
-                        <p style="color:#666; text-align:center;">No attacks launched yet</p>
-                    </div>
-                </div>
-            </div>
-        </section>
-        
-        <section class="section" id="attack">
-            <h2 class="section-title">Launch Attack Simulation</h2>
-            <div class="attack-form">
-                <form id="attackForm">
-                    <div class="form-group">
-                        <label for="persona">Attack Persona</label>
-                        <select id="persona" name="persona" required>
-                            <option value="">Select an attack persona</option>
-                            ${PERSONAS.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="target">Target System</label>
-                        <input type="text" id="target" name="target" placeholder="e.g., API Gateway, Auth Service, Database" required>
-                    </div>
-                    
-                    <button type="submit" class="cta-button" style="width:100%;">Launch Attack</button>
-                </form>
-                <div id="attackResult" style="margin-top:20px;"></div>
-            </div>
-        </section>
-    </div>
-    
-    <footer>
-        <div class="container">
-            <p><i style="color:#888">Built with <a href="https://github.com/Lucineer/cocapn-ai" style="color:#dc2626">Cocapn</a></i></p>
         </div>
-    </footer>
-    
+
+        <div class="section">
+            <h2>Security Dashboard</h2>
+            <div class="dashboard-stats">
+                <div class="stat-card">
+                    <div class="stat-value" id="totalAttacks">0</div>
+                    <div class="stat-label">Total Attacks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="activeAgents">0</div>
+                    <div class="stat-label">Active Agents</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="vulnerabilities">0</div>
+                    <div class="stat-label">Vulnerabilities Found</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="avgIntensity">0</div>
+                    <div class="stat-label">Avg. Intensity</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>API Endpoints</h2>
+            <div class="api-endpoints">
+                <div class="endpoint">
+                    <span class="method">POST</span> /api/attack - Launch new attack simulation
+                </div>
+                <div class="endpoint">
+                    <span class="method">GET</span> /api/attacks - List all attack simulations
+                </div>
+                <div class="endpoint">
+                    <span class="method">GET</span> /api/dashboard - Get security dashboard data
+                </div>
+                <div class="endpoint">
+                    <span class="method">GET</span> /health - Health check endpoint
+                </div>
+            </div>
+        </div>
+
+        <div class="fleet-footer">
+            Adversarial Red Team | Fleet Hardening System | Cloudflare Worker
+        </div>
+    </div>
+
     <script>
-        async function updateDashboard() {
-            try {
-                const response = await fetch('/api/dashboard');
-                const data = await response.json();
-                
-                document.getElementById('totalAttacks').textContent = data.totalAttacks;
-                document.getElementById('activeAttacks').textContent = data.activeAttacks;
-                document.getElementById('vulnerabilitiesFound').textContent = data.vulnerabilitiesFound;
-                document.getElementById('criticalVulnerabilities').textContent = data.criticalVulnerabilities;
-                
-                const recentAttacks = document.getElementById('recentAttacks');
-                if (data.recentAttacks && data.recentAttacks.length > 0) {
-                    recentAttacks.innerHTML = data.recentAttacks.map(attack => \`
-                        <div style="background:#0a0a0f; padding:15px; border-radius:6px; margin-bottom:10px; border-left:3px solid #dc2626;">
-                            <div style="display:flex; justify-content:space-between; align-items:center;">
-                                <div>
-                                    <strong style="color:#fff;">\${attack.persona}</strong>
-                                    <span style="color:#666; margin-left:10px;">on \${attack.target}</span>
-                                </div>
-                                <span class="status-badge status-\${attack.status}">\${attack.status}</span>
-                            </div>
-                            <div style="color:#888; font-size:0.9rem; margin-top:5px;">
-                                \${new Date(attack.timestamp).toLocaleString()}
-                            </div>
-                        </div>
-                    \`).join('');
-                }
-            } catch (error) {
-                console.error('Failed to update dashboard:', error);
-            }
-        }
-        
-        document.getElementById('attackForm').addEventListener('submit', async (e) => {
+        document.getElementById('intensity').addEventListener('input', function(e) {
+            document.getElementById('intensityValue').textContent = e.target.value;
+        });
+
+        document.getElementById('attackForm').addEventListener('submit', async function(e) {
             e.preventDefault();
-            
-            const persona = document.getElementById('persona').value;
-            const target = document.getElementById('target').value;
-            const resultDiv = document.getElementById('attackResult');
-            
-            resultDiv.innerHTML = '<p style="color:#dc2626;">Launching attack...</p>';
-            
+            const formData = new FormData(this);
+            const attackData = {
+                persona: formData.get('persona'),
+                target: formData.get('target'),
+                intensity: parseInt(formData.get('intensity'))
+            };
+
+            const button = this.querySelector('button');
+            button.disabled = true;
+            button.textContent = 'Launching...';
+
             try {
                 const response = await fetch('/api/attack', {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
+                        'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ persona, target })
+                    body: JSON.stringify(attackData)
                 });
                 
-                const result = await response.json();
-                
                 if (response.ok) {
-                    resultDiv.innerHTML = \`
-                        <div style="background:rgba(34,197,94,0.1); padding:15px; border-radius:6px; border:1px solid #22c55e;">
-                            <p style="color:#22c55e; margin-bottom:10px;">
-                                <strong>Attack launched successfully!</strong>
-                            </p>
-                            <p style="color:#aaa; font-size:0.9rem;">
-                                Attack ID: \${result.attackId}<br>
-                                Persona: \${result.persona}<br>
-                                Target: \${result.target}
-                            </p>
-                        </div>
-                    \`;
+                    alert('Attack simulation launched successfully!');
+                    this.reset();
+                    document.getElementById('intensityValue').textContent = '5';
                     updateDashboard();
                 } else {
-                    resultDiv.innerHTML = \`
-                        <div style="background:rgba(239,68,68,0.1); padding:15px; border-radius:6px; border:1px solid #ef4444;">
-                            <p style="color:#ef4444;">Error: \${result.error}</p>
-                        </div>
-                    \`;
+                    const error = await response.text();
+                    alert('Error: ' + error);
                 }
-            } catch (error) {
-                resultDiv.innerHTML = \`
-                    <div style="background:rgba(239,68,68,0.1); padding:15px; border-radius:6px; border:1px solid #ef4444;">
-                        <p style="color:#ef4444;">Failed to launch attack. Please try again.</p>
-                    </div>
-                \`;
+            } catch (err) {
+                alert('Network error: ' + err.message);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Launch Attack Simulation';
             }
-            
-            document.getElementById('attackForm').reset();
         });
-        
+
+        async function updateDashboard() {
+            try {
+                const response = await fetch('/api/dashboard');
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('totalAttacks').textContent = data.totalAttacks;
+                    document.getElementById('activeAgents').textContent = data.activeAgents;
+                    document.getElementById('vulnerabilities').textContent = data.vulnerabilitiesFound;
+                    document.getElementById('avgIntensity').textContent = data.averageIntensity.toFixed(1);
+                }
+            } catch (err) {
+                console.error('Failed to update dashboard:', err);
+            }
+        }
+
+        // Initial dashboard load
         updateDashboard();
-        setInterval(updateDashboard, 10000);
+        // Refresh dashboard every 30 seconds
+        setInterval(updateDashboard, 30000);
     </script>
 </body>
 </html>
 `;
 
 export default {
-  async fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
-    
-    const headers = {
-      'Content-Type': 'text/html',
+
+    // Security headers
+    const securityHeaders = {
+      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.gstatic.com; font-src https://fonts.gstatic.com;",
       'X-Frame-Options': 'DENY',
-      'Content-Security-Policy': "default-src 'self'; script-src 'self' https://fonts.googleapis.com; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src https://fonts.gstatic.com; img-src 'self' data:;",
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'strict-origin-when-cross-origin'
     };
-    
-    if (path === '/' || path === '') {
-      return new Response(html, { headers });
-    }
-    
+
+    // Health endpoint
     if (path === '/health') {
-      return new Response(JSON.stringify({ status: 'ok' }), {
-        headers: { 'Content-Type': 'application/json' },
+      return new Response(JSON.stringify({ status: 'ok', timestamp: Date.now() }), {
+        headers: { 'Content-Type': 'application/json', ...securityHeaders }
       });
     }
-    
+
+    // API: Launch attack
     if (path === '/api/attack' && request.method === 'POST') {
       try {
-        const body = await request.json();
-        const { persona, target } = body;
+        const attackData: AttackRequest = await request.json();
         
-        if (!persona || !target) {
-          return new Response(JSON.stringify({ error: 'Missing persona or target' }), {
+        if (!ATTACK_PERSONAS[attackData.persona as keyof typeof ATTACK_PERSONAS]) {
+          return new Response(JSON.stringify({ error: 'Invalid attack persona' }), {
             status: 400,
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...securityHeaders }
           });
         }
-        
-        const attackId = Date.now().toString(36) + Math.random().toString(36).substr(2);
-        const attack: Attack = {
-          id: attackId,
-          persona,
-          target,
-          timestamp: Date.now(),
-          status: 'running',
-        };
-        
-        ATTACKS_DB.set(attackId, attack);
-        DASHBOARD_DATA.totalAttacks++;
-        DASHBOARD_DATA.activeAttacks++;
-        DASHBOARD_DATA.recentAttacks.unshift(attack);
-        
-        if (DASHBOARD_DATA.recentAttacks.length > 5) {
-          DASHBOARD_DATA.recentAttacks = DASHBOARD_DATA.recentAttacks.slice(0, 5);
+
+        if (attackData.intensity < 1 || attackData.intensity > 10) {
+          return new Response(JSON.stringify({ error: 'Intensity must be between 1-10' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json', ...securityHeaders }
+          });
         }
-        
-        setTimeout(() => {
-          const storedAttack = ATTACKS_DB.get(attackId);
-          if (storedAttack) {
-            storedAttack.status = 'completed';
-            storedAttack.results = {
-              vulnerabilities: ['Insufficient input validation', 'Missing rate limiting', 'Weak authentication checks'],
-              severity: Math.random() > 0.7 ? 'critical' : Math.random() > 0.5 ? 'high' : 'medium',
-              vaccineGenerated: true,
-            };
-            DASHBOARD_DATA.activeAttacks--;
-            DASHBOARD_DATA.vulnerabilitiesFound += storedAttack.results.vulnerabilities.length;
-            if (storedAttack.results.severity === 'critical') {
-              DASHBOARD_DATA.criticalVulnerabilities++;
-            }
-          }
-        }, 5000);
-        
-        return new Response(JSON.stringify({
+
+        const attackId = `attack_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const attackRecord: AttackRecord = {
+          id: attackId,
+          persona: attackData.persona,
+          target: attackData.target,
+          intensity: attackData.intensity,
+          timestamp: Date.now(),
+          status: 'queued',
+          findings: []
+        };
+
+        // Store in KV
+        await env.ATTACK_RESULTS.put(attackId, JSON.stringify(attackRecord), {
+          metadata: { timestamp: Date.now() }
+        });
+
+        // Queue for processing
+        await env.ATTACK_QUEUE.send({
           attackId,
-          persona,
-          target,
-          message: 'Attack simulation started',
+          ...attackData
+        });
+
+        return new Response(JSON.stringify({ 
+          message: 'Attack simulation queued', 
+          attackId,
+          record: attackRecord 
         }), {
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...securityHeaders }
         });
       } catch (error) {
-        return new Response(JSON.stringify({ error: 'Invalid request' }), {
+        return new Response(JSON.stringify({ error: 'Invalid request body' }), {
           status: 400,
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...securityHeaders }
         });
       }
     }
-    
+
+    // API: List attacks
     if (path === '/api/attacks' && request.method === 'GET') {
-      const attacks = Array.from(ATTACKS_DB.values());
-      return new Response(JSON.stringify(attacks), {
-        headers: { 'Content-Type': 'application/json' },
-      });
+      try {
+        const list = await env.ATTACK_RESULTS.list();
+        const attacks: AttackRecord[] = [];
+        
+        for (const key of list.keys) {
+          const record = await env.ATTACK_RESULTS.get(key.name, 'json');
+          if (record) {
+            attacks.push(record as AttackRecord);
+          }
+        }
+
+        // Sort by timestamp descending
+        attacks.sort((a, b) => b.timestamp - a.timestamp);
+
+        return new Response(JSON.stringify({ attacks }), {
+          headers: { 'Content-Type': 'application/json', ...securityHeaders }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ error: 'Failed to retrieve attacks' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json', ...securityHeaders }
+        });
+      }
     }
-    
+
+    // API: Dashboard data
     if (path === '/api/dashboard' && request.method === 'GET') {
-      return new Response(JSON.stringify(DASHBOARD_DATA), {
-        headers: { 'Content-Type': 'application/json' },
+      try {
+        const list = await env.ATTACK_RESULTS.list();
+        const attacks: AttackRecord[] = [];
+        let totalIntensity = 0;
+        let vulnerabilitiesFound = 0;
+        let activeAgents = 0;
+
+        for (const key of list.keys) {
+          const record = await env.ATTACK_RESULTS.get(key.name, 'json') as AttackRecord;
+          if (record) {
+            attacks.push(record);
+            totalIntensity += record.intensity;
+            
+            if (record.findings && record.findings.length > 0) {
+              vulnerabilitiesFound += record.findings.length;
+            }
+            
+            if (record.status === 'running') {
+              activeAgents++;
+            }
+          }
+        }
+
+        const averageIntensity = attacks.length > 0 ? totalIntensity / attacks.length : 0;
+
+        return new Response(JSON.stringify({
+          totalAttacks: attacks.length,
+          activeAgents,
+          vulnerabilitiesFound,
+          averageIntensity,
+          recentAttacks: attacks.slice(0, 5)
+        }), {
+          headers: { 'Content-Type': 'application/json', ...securityHeaders }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ 
+          totalAttacks: 0,
+          activeAgents: 0,
+          vulnerabilitiesFound: 0,
+          averageIntensity: 0,
+          recentAttacks: []
+        }), {
+          headers: { 'Content-Type': 'application/json', ...securityHeaders }
+        });
+      }
+    }
+
+    // Main HTML page
+    if (path === '/' && request.method === 'GET') {
+      return new Response(HTML_TEMPLATE, {
+        headers: { 
+          'Content-Type': 'text/html;charset=UTF-8',
+          ...securityHeaders
+        }
       });
     }
-    
-    return new Response('Not Found', { status: 404, headers });
+
+    // 404 for all other routes
+    return new Response('Not Found', { 
+      status: 404,
+      headers: securityHeaders
+    });
   },
+
+  async queue(batch: MessageBatch<Error>, env: Env): Promise<void> {
+    for (const message of batch.messages) {
+      try {
+        const attackData = message.body;
+        
+        // Update status to running
+        const record = await env.ATTACK_RESULTS.get(attackData.attackId, 'json') as AttackRecord;
+        if (record) {
+          record.status = 'running';
+          await env.ATTACK_RESULTS.put(attackData.attackId, JSON.stringify(record));
+        }
+
+        // Simulate attack execution
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Generate simulated findings
+        const findings = simulateAttackFindings(attackData.persona);
+        
+        // Update record with findings
+        if (record) {
+          record.status = 'completed';
+          record.findings = findings;
+          await env.ATTACK_RESULTS.put(attackData.attackId, JSON.stringify(record));
+        }
+        
+        message.ack();
+      } catch (error) {
+        console.error('Failed to process attack:', error);
+        message.retry();
+      }
+    }
+  }
+};
+
+function simulateAttackFindings(persona: string): string[] {
+  const findings: string[] = [];
+  
+  switch (persona) {
+    case 'stealth-scanner':
+      if (Math.random() > 0.3) findings.push('Open port 22 detected');
+      if (Math.random() > 0.5) findings.push('Outdated service version identified');
+      if (Math.random() > 0.7) findings.push('Exposed admin interface found');
+      break;
+    case 'payload-injector':
+      if (Math.random() > 0.6) findings.push('Potential SQL injection vector');
+      if (Math.random() > 0.4) findings.push('Reflected XSS possible in query parameter');
+      break;
+    case 'auth-cracker':
+      if (Math.random() > 0.5) findings.push('Weak password policy detected');
+      if (Math.random() > 0.8) findings.push('Session timeout too long');
+      break;
+    case 'resource-stressor':
+      if (Math.random() > 0.3) findings.push('Service degraded under load');
+      if (Math.random() > 0.6) findings.push('Memory leak detected during stress test');
+      break;
+  }
+  
+  if (findings.length === 0) {
+    findings.push('No critical vulnerabilities detected');
+  }
+  
+  return findings;
+}
 };
